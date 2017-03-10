@@ -7,11 +7,8 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.location.LocationManager;
 import android.support.annotation.NonNull;
-import com.polidea.rxandroidble.internal.util.CheckerLocationPermission;
-import com.polidea.rxandroidble.internal.util.CheckerLocationProvider;
+import com.polidea.rxandroidble.internal.ClientDependenciesImpl;
 import com.polidea.rxandroidble.internal.util.LocationServicesStatus;
-import com.polidea.rxandroidble.internal.util.ProviderApplicationTargetSdk;
-import com.polidea.rxandroidble.internal.util.ProviderDeviceSdk;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import rx.Emitter;
@@ -28,19 +25,8 @@ import rx.internal.operators.OnSubscribeCreate;
 public class LocationServicesOkObservable extends Observable<Boolean> {
 
     public static LocationServicesOkObservable createInstance(@NonNull final Context context) {
-        final Context applicationContext = context.getApplicationContext();
-        final LocationManager locationManager = (LocationManager) applicationContext.getSystemService(Context.LOCATION_SERVICE);
-        final ProviderDeviceSdk providerDeviceSdk = new ProviderDeviceSdk();
-        final ProviderApplicationTargetSdk providerApplicationTargetSdk = new ProviderApplicationTargetSdk(applicationContext);
-        final CheckerLocationPermission checkerLocationPermission = new CheckerLocationPermission(applicationContext);
-        final CheckerLocationProvider checkerLocationProvider = new CheckerLocationProvider(locationManager);
-        final LocationServicesStatus locationServicesStatus = new LocationServicesStatus(
-                checkerLocationProvider,
-                checkerLocationPermission,
-                providerDeviceSdk,
-                providerApplicationTargetSdk
-        );
-        return new LocationServicesOkObservable(applicationContext, locationServicesStatus);
+        final ClientDependenciesImpl clientDependencies = new ClientDependenciesImpl(context);
+        return new LocationServicesOkObservable(context.getApplicationContext(), clientDependencies.getLocationServicesStatus());
     }
 
     LocationServicesOkObservable(@NonNull final Context context, @NonNull final LocationServicesStatus locationServicesStatus) {

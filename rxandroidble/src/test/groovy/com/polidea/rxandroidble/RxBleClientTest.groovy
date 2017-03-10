@@ -9,6 +9,7 @@ import static com.polidea.rxandroidble.exceptions.BleScanException.LOCATION_SERV
 import android.bluetooth.BluetoothDevice
 import android.content.Context
 import com.polidea.rxandroidble.exceptions.BleScanException
+import com.polidea.rxandroidble.internal.ClientDependencies
 import com.polidea.rxandroidble.internal.RxBleDeviceProvider
 import com.polidea.rxandroidble.internal.RxBleRadio
 import com.polidea.rxandroidble.internal.RxBleRadioOperation
@@ -31,6 +32,7 @@ class RxBleClientTest extends Specification {
     MockRxBleAdapterStateObservable adapterStateObservable = Spy MockRxBleAdapterStateObservable
     MockLocationServicesStatus locationServicesStatusMock = new MockLocationServicesStatus()
     RxBleDeviceProvider mockDeviceProvider = Mock RxBleDeviceProvider
+    Map<Set<UUID>, Observable<RxBleScanResult>> queuedScanOperations = new HashMap<>()
     private static someUUID = UUID.randomUUID()
     private static otherUUID = UUID.randomUUID()
 
@@ -41,14 +43,16 @@ class RxBleClientTest extends Specification {
             device.macAddress >> macAddress
             device
         }
-        objectUnderTest = new RxBleClientImpl(
-                bleAdapterWrapperSpy,
-                rxBleRadio,
-                adapterStateObservable.asObservable(),
-                uuidParserSpy,
-                locationServicesStatusMock,
-                mockDeviceProvider
-        )
+        def clientDependencies = Mock ClientDependencies
+        clientDependencies.getRadio() >> rxBleRadio
+        clientDependencies.getApplicationContext() >> contextMock
+        clientDependencies.getUuidUtil() >> uuidParserSpy
+        clientDependencies.getBluetoothAdapterWrapper() >> bleAdapterWrapperSpy
+        clientDependencies.getAdapterStateObservable() >> adapterStateObservable.asObservable()
+        clientDependencies.getLocationServicesStatus() >> locationServicesStatusMock
+        clientDependencies.getDeviceProvider() >> mockDeviceProvider
+        clientDependencies.getQueuedScanOperations() >> queuedScanOperations
+        objectUnderTest = new RxBleClientImpl(clientDependencies)
     }
 
     def "should return bonded devices"() {

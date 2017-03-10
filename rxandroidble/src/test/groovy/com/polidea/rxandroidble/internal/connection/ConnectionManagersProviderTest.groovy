@@ -8,9 +8,9 @@ import com.polidea.rxandroidble.internal.util.BleConnectionCompat
 import spock.lang.Specification
 import spock.lang.Unroll
 
-public class RxBleConnectionConnectorOperationsProviderTest extends Specification {
+public class ConnectionManagersProviderTest extends Specification {
 
-    RxBleConnectionConnectorOperationsProvider provider
+    ConnectionManagersProvider provider
     Context mockContext
     BluetoothDevice mockDevice
     RxBleGattCallback mockCallback
@@ -21,7 +21,7 @@ public class RxBleConnectionConnectorOperationsProviderTest extends Specificatio
         mockDevice = Mock BluetoothDevice
         mockCallback = Mock RxBleGattCallback
         mockConnectionCompat = Mock BleConnectionCompat
-        provider = new RxBleConnectionConnectorOperationsProvider()
+        provider = new ConnectionManagersProvider()
     }
 
     @Unroll
@@ -31,9 +31,10 @@ public class RxBleConnectionConnectorOperationsProviderTest extends Specificatio
         def pair = provider.provide(mockContext, mockDevice, autoConnectValue, mockConnectionCompat, mockCallback)
 
         then:
-        assert pair instanceof RxBleConnectionConnectorOperationsProvider.RxBleOperations
-        assert pair.connect instanceof RxBleRadioOperationConnect
-        assert pair.disconnect instanceof RxBleRadioOperationDisconnect
+        assert pair instanceof ConnectionManagersProvider.ConnectionManagers
+        assert pair.connectOperation instanceof RxBleRadioOperationConnect
+        assert pair.disconnectOperation instanceof RxBleRadioOperationDisconnect
+        assert pair.rxBleGattCallback == mockCallback
 
         where:
         id | autoConnectValue

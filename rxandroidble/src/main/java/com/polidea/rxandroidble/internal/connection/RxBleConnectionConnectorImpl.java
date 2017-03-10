@@ -1,6 +1,6 @@
 package com.polidea.rxandroidble.internal.connection;
 
-import static com.polidea.rxandroidble.internal.connection.RxBleConnectionConnectorOperationsProvider.RxBleOperations;
+import static com.polidea.rxandroidble.internal.connection.ConnectionManagersProvider.ConnectionManagers;
 import static com.polidea.rxandroidble.internal.util.ObservableUtil.justOnNext;
 
 import android.bluetooth.BluetoothDevice;
@@ -9,10 +9,8 @@ import android.content.Context;
 import com.polidea.rxandroidble.RxBleAdapterStateObservable.BleAdapterState;
 import com.polidea.rxandroidble.RxBleConnection;
 import com.polidea.rxandroidble.exceptions.BleDisconnectedException;
-import com.polidea.rxandroidble.internal.RxBleRadio;
+import com.polidea.rxandroidble.internal.DeviceDependencies;
 import com.polidea.rxandroidble.internal.operations.RxBleRadioOperationDisconnect;
-import com.polidea.rxandroidble.internal.util.BleConnectionCompat;
-import com.polidea.rxandroidble.internal.util.RxBleAdapterWrapper;
 import rx.Observable;
 import rx.Subscription;
 import rx.functions.Action0;
@@ -22,25 +20,11 @@ import rx.functions.Func1;
 
 public class RxBleConnectionConnectorImpl implements RxBleConnection.Connector {
 
-    private final BluetoothDevice bluetoothDevice;
-    private final RxBleGattCallback.Provider gattCallbackProvider;
-    private final RxBleConnectionConnectorOperationsProvider operationsProvider;
-    private final RxBleRadio rxBleRadio;
-    private final BleConnectionCompat connectionCompat;
-    private final RxBleAdapterWrapper rxBleAdapterWrapper;
-    private final Observable<BleAdapterState> adapterStateObservable;
+    private final DeviceDependencies deviceDependencies;
 
-    public RxBleConnectionConnectorImpl(BluetoothDevice bluetoothDevice, RxBleGattCallback.Provider gattCallbackProvider,
-                                        RxBleConnectionConnectorOperationsProvider operationsProvider, RxBleRadio rxBleRadio,
-                                        BleConnectionCompat connectionCompat, RxBleAdapterWrapper rxBleAdapterWrapper,
-                                        Observable<BleAdapterState> adapterStateObservable) {
-        this.bluetoothDevice = bluetoothDevice; // TODO: pass in prepareConnection?
-        this.gattCallbackProvider = gattCallbackProvider;
-        this.operationsProvider = operationsProvider;
-        this.rxBleRadio = rxBleRadio;
-        this.connectionCompat = connectionCompat;
-        this.rxBleAdapterWrapper = rxBleAdapterWrapper;
-        this.adapterStateObservable = adapterStateObservable;
+    public RxBleConnectionConnectorImpl(DeviceDependencies deviceDependencies) {
+
+        this.deviceDependencies = deviceDependencies;
     }
 
     @Override
@@ -48,18 +32,16 @@ public class RxBleConnectionConnectorImpl implements RxBleConnection.Connector {
         return Observable.defer(new Func0<Observable<RxBleConnection>>() {
             @Override
             public Observable<RxBleConnection> call() {
-                if (!rxBleAdapterWrapper.isBluetoothEnabled()) {
+                final BluetoothDevice bluetoothDevice = deviceDependencies.getBluetoothDevice();
+                if (!deviceDependencies.getBluetoothAdapterWrapper().isBluetoothEnabled()) {
                     return Observable.error(new BleDisconnectedException(bluetoothDevice.getAddress()));
                 }
 
-                final RxBleGattCallback gattCallback = gattCallbackProvider.provide();
-                final RxBleOperations operationsPair =
-                        operationsProvider.provide(context, bluetoothDevice, autoConnect, connectionCompat, gattCallback);
-
+                final ConnectionManagers connectionManagers = deviceDependencies.getConnectionManagers(autoConnect);
 
                 return Observable.merge(
-                        rxBleRadio.queue(operationsPair.connect),
-                        adapterStateObservable
+                        deviceDependencies.getRadio().queue(connectionManagers.connectOperation),
+                        deviceDependencies.getAdapterStateObservable()
                                 .filter(new Func1<BleAdapterState, Boolean>() {
                                     @Override
                                     public Boolean call(BleAdapterState bleAdapterState) {
@@ -77,14 +59,14 @@ public class RxBleConnectionConnectorImpl implements RxBleConnection.Connector {
                         .flatMap(new Func1<BluetoothGatt, Observable<RxBleConnection>>() {
                             @Override
                             public Observable<RxBleConnection> call(BluetoothGatt bluetoothGatt) {
-                                return RxBleConnectionConnectorImpl.this.emitConnectionWithoutCompleting(gattCallback, bluetoothGatt);
+                                return emitConnectionWithoutCompleting(connectionManagers.rxBleGattCallback, bluetoothGatt);
                             }
                         })
-                        .mergeWith(gattCallback.<RxBleConnection>observeDisconnect())
+                        .mergeWith(connectionManagers.rxBleGattCallback.<RxBleConnection>observeDisconnect())
                         .doOnUnsubscribe(new Action0() {
                             @Override
                             public void call() {
-                                RxBleConnectionConnectorImpl.this.enqueueDisconnectOperation(operationsPair.disconnect);
+                                enqueueDisconnectOperation(connectionManagers.disconnectOperation);
                             }
                         });
             }
@@ -92,11 +74,12 @@ public class RxBleConnectionConnectorImpl implements RxBleConnection.Connector {
     }
 
     private Observable<RxBleConnection> emitConnectionWithoutCompleting(RxBleGattCallback gattCallback, BluetoothGatt bluetoothGatt) {
-        return justOnNext(new RxBleConnectionImpl(rxBleRadio, gattCallback, bluetoothGatt)).cast(RxBleConnection.class);
+        return justOnNext(new RxBleConnectionImpl(new ConnectionDependenciesImpl(deviceDependencies, bluetoothGatt, gattCallback)))
+                .cast(RxBleConnection.class);
     }
 
     private Subscription enqueueDisconnectOperation(RxBleRadioOperationDisconnect operationDisconnect) {
-        return rxBleRadio
+        return deviceDependencies.getRadio()
                 .queue(operationDisconnect)
                 .subscribe(
                         Actions.empty(),

@@ -1,22 +1,27 @@
 package com.polidea.rxandroidble.internal.connection
 
+import static rx.Observable.empty
+
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCharacteristic
 import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothGattService
-import android.os.Build
 import android.support.annotation.NonNull
 import com.polidea.rxandroidble.*
 import com.polidea.rxandroidble.exceptions.*
+import com.polidea.rxandroidble.internal.RxBleRadio
+import com.polidea.rxandroidble.internal.operations.RxBleRadioOperationMtuRequest
+import com.polidea.rxandroidble.internal.operations.RxBleRadioOperationServicesDiscover
 import com.polidea.rxandroidble.internal.util.ByteAssociation
 import com.polidea.rxandroidble.internal.util.CharacteristicChangedEvent
-import org.robolectric.annotation.Config
-import org.robospock.GradleRoboSpecification
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 import rx.Observable
 import rx.Scheduler
 import rx.observers.TestSubscriber
 import rx.subjects.BehaviorSubject
 import rx.subjects.PublishSubject
+import spock.lang.Specification
 import spock.lang.Unroll
 
 import static com.polidea.rxandroidble.exceptions.BleGattOperationType.DESCRIPTOR_WRITE
@@ -24,32 +29,138 @@ import static java.util.Collections.emptyList
 import static rx.Observable.from
 import static rx.Observable.just
 
-@Config(manifest = Config.NONE, constants = BuildConfig, sdk = Build.VERSION_CODES.LOLLIPOP)
-class RxBleConnectionTest extends GradleRoboSpecification {
+class RxBleConnectionTest extends Specification {
+
     public static final CHARACTERISTIC_UUID = UUID.fromString("f301f518-5414-471c-8a7b-2ef6d1b7373d")
+
     public static final CHARACTERISTIC_INSTANCE_ID = 1
+
     public static final OTHER_UUID = UUID.fromString("ab906173-5daa-4d6b-8604-c2be69122d57")
+
     public static final OTHER_INSTANCE_ID = 2
+
     public static final byte[] EMPTY_DATA = [] as byte[]
+
     public static final byte[] NOT_EMPTY_DATA = [1, 2, 3] as byte[]
+
     public static final byte[] OTHER_DATA = [2, 2, 3] as byte[]
+
     public static final int EXPECTED_RSSI_VALUE = 5
-    def flatRadio = new FlatRxBleRadio()
+
+    def mockRadio = Mock RxBleRadio
+
     def gattCallback = Mock RxBleGattCallback
+
     def bluetoothGattMock = Mock BluetoothGatt
-    def objectUnderTest = new RxBleConnectionImpl(flatRadio, gattCallback, bluetoothGattMock)
+
+    def connectionDependencies = Mock ConnectionDependencies
+
+    def discoveredServicesCacheMock = Mock AtomicReference
+
+    RxBleConnection objectUnderTest
+
     def connectionStateChange = BehaviorSubject.create()
+
     def TestSubscriber testSubscriber
 
     def setup() {
         testSubscriber = new TestSubscriber()
         gattCallback.getOnConnectionStateChange() >> connectionStateChange
+        connectionDependencies.getRadio() >> mockRadio
+        connectionDependencies.getBluetoothGatt() >> bluetoothGattMock
+        connectionDependencies.getGattCallback() >> gattCallback
+        connectionDependencies.getDiscoveredServicesCache() >> discoveredServicesCacheMock
+        objectUnderTest = new RxBleConnectionImpl(connectionDependencies)
+    }
+
+    @Unroll
+    def "should get discover services operation with proper parameters when called"() {
+
+        given:
+        gattContainNoServices()
+        cacheContainsNoObservable()
+        def mockOperation = mockOperation RxBleRadioOperationServicesDiscover
+        def discoveryResultObservable = empty()
+
+        when:
+        discoveryClosure.call(objectUnderTest).subscribe()
+
+        then:
+        1 * connectionDependencies.getNewServiceDiscoveryOperation(expectedTimeout, expectedTimeoutTimeUnit) >> mockOperation
+        1 * mockRadio.queue(mockOperation) >> discoveryResultObservable
+        1 * discoveredServicesCacheMock.set(_)
+
+        where:
+        expectedTimeout | expectedTimeoutTimeUnit
+        20              | TimeUnit.SECONDS
+        1               | TimeUnit.HOURS
+        discoveryClosure << [
+                { RxBleConnection connection -> connection.discoverServices() },
+                { RxBleConnection connection -> connection.discoverServices(1, TimeUnit.HOURS) },
+        ]
+    }
+
+    @Unroll
+    def "should not get discover services operation if gatt contains services"() {
+
+        given:
+        gattContainServices([Mock(BluetoothGattService)])
+        cacheContainsNoObservable()
+
+        when:
+        discoveryClosure.call(objectUnderTest)
+
+        then:
+        0 * connectionDependencies.getNewServiceDiscoveryOperation(_, _) >> null
+        0 * mockRadio.queue(_) >> empty()
+        1 * discoveredServicesCacheMock.set(_)
+
+        where:
+        discoveryClosure << [
+                { RxBleConnection connection -> connection.discoverServices() },
+                { RxBleConnection connection -> connection.discoverServices(10, TimeUnit.SECONDS) },
+        ]
+    }
+
+    @Unroll
+    def "should not get discover services operation if cashed result is available"() {
+
+        given:
+        def cachedResultObservable = Observable.empty()
+        cacheContainsPreviousDiscovery(cachedResultObservable)
+
+        when:
+        def callResult = discoveryClosure.call(objectUnderTest)
+
+        then:
+        callResult == cachedResultObservable
+        0 * connectionDependencies.getNewServiceDiscoveryOperation(_, _) >> null
+        0 * mockRadio.queue(_) >> Observable.empty()
+
+        where:
+        discoveryClosure << [
+                { RxBleConnection connection -> connection.discoverServices() },
+                { RxBleConnection connection -> connection.discoverServices(10, TimeUnit.SECONDS) },
+        ]
+    }
+
+    def "should get request mtu operation with proper parameters"() {
+
+        given:
+        def mockOperation = mockOperation RxBleRadioOperationMtuRequest
+
+        when:
+        objectUnderTest.requestMtu(100).subscribe()
+
+        then:
+        1 * connectionDependencies.getNewRequestMtuOperation(100, _, _) >> mockOperation
+        1 * mockRadio.queue(_) >> Observable.empty()
     }
 
     def "should emit BleGattCannotStartException if failed to start retrieving services"() {
         given:
         gattCallback.getOnServicesDiscovered() >> PublishSubject.create()
-        shouldGattContainNoServices()
+        gattContainNoServices()
         shouldFailStartingDiscovery()
 
         when:
@@ -153,7 +264,7 @@ class RxBleConnectionTest extends GradleRoboSpecification {
         given:
         def services = [Mock(BluetoothGattService), Mock(BluetoothGattService)]
         shouldSuccessfullyStartDiscovery()
-        shouldGattContainNoServices()
+        gattContainNoServices()
         gattCallback.getOnServicesDiscovered() >> just(new RxBleDeviceServices(services))
 
         when:
@@ -168,7 +279,7 @@ class RxBleConnectionTest extends GradleRoboSpecification {
     def "should emit BleCharacteristicNotFoundException during read operation if no services were found"() {
         given:
         shouldGattCallbackReturnServicesOnDiscovery([])
-        shouldGattContainNoServices()
+        gattContainNoServices()
 
         when:
         objectUnderTest.readCharacteristic(CHARACTERISTIC_UUID).subscribe(testSubscriber)
@@ -181,7 +292,7 @@ class RxBleConnectionTest extends GradleRoboSpecification {
         given:
         def service = Mock BluetoothGattService
         shouldGattCallbackReturnServicesOnDiscovery([service])
-        shouldGattContainServices([service])
+        gattContainServices([service])
         service.getCharacteristic(_) >> null
 
         when:
@@ -198,7 +309,7 @@ class RxBleConnectionTest extends GradleRoboSpecification {
         shouldServiceContainCharacteristic(service, CHARACTERISTIC_UUID, CHARACTERISTIC_INSTANCE_ID, NOT_EMPTY_DATA)
         shouldServiceContainCharacteristic(service, OTHER_UUID, OTHER_INSTANCE_ID, OTHER_DATA)
         shouldGattCallbackReturnServicesOnDiscovery([service])
-        shouldGattContainNoServices()
+        gattContainNoServices()
         shouldGattCallbackReturnDataOnRead(
                 [uuid: OTHER_UUID, value: OTHER_DATA],
                 [uuid: CHARACTERISTIC_UUID, value: NOT_EMPTY_DATA])
@@ -213,7 +324,7 @@ class RxBleConnectionTest extends GradleRoboSpecification {
     def "should emit BleCharacteristicNotFoundException if there are no services during write operation"() {
         given:
         shouldGattCallbackReturnServicesOnDiscovery([])
-        shouldGattContainNoServices()
+        gattContainNoServices()
 
         when:
         objectUnderTest.writeCharacteristic(CHARACTERISTIC_UUID, NOT_EMPTY_DATA).subscribe(testSubscriber)
@@ -680,7 +791,7 @@ class RxBleConnectionTest extends GradleRoboSpecification {
         objectUnderTest.queue(radioOperationCustom).subscribe(testSubscriber)
 
         then:
-        flatRadio.semaphore.isReleased()
+        mockRadio.semaphore.isReleased()
         testSubscriber.assertError(RuntimeException.class)
     }
 
@@ -692,7 +803,7 @@ class RxBleConnectionTest extends GradleRoboSpecification {
         objectUnderTest.queue(radioOperationCustom).subscribe(testSubscriber)
 
         then:
-        flatRadio.semaphore.isReleased()
+        mockRadio.semaphore.isReleased()
         testSubscriber.assertError(RuntimeException.class)
     }
 
@@ -704,7 +815,7 @@ class RxBleConnectionTest extends GradleRoboSpecification {
         objectUnderTest.queue(radioOperationCustom).subscribe(testSubscriber)
 
         then:
-        flatRadio.semaphore.isReleased()
+        mockRadio.semaphore.isReleased()
         testSubscriber.assertCompleted()
     }
 
@@ -716,12 +827,13 @@ class RxBleConnectionTest extends GradleRoboSpecification {
         objectUnderTest.queue(radioOperationCustom).subscribe(testSubscriber)
 
         then:
-        flatRadio.semaphore.isReleased()
+        mockRadio.semaphore.isReleased()
         testSubscriber.assertError(IllegalArgumentException.class)
     }
 
     public customRadioOperationWithOutcome(Closure<Observable<Boolean>> outcomeSupplier) {
         new RxBleRadioOperationCustom<Boolean>() {
+
             @NonNull
             @Override
             Observable<Boolean> asObservable(BluetoothGatt bluetoothGatt,
@@ -759,7 +871,7 @@ class RxBleConnectionTest extends GradleRoboSpecification {
     public shouldContainOneServiceWithoutCharacteristics() {
         def service = Mock BluetoothGattService
         shouldGattCallbackReturnServicesOnDiscovery([service])
-        shouldGattContainServices([service])
+        gattContainServices([service])
         service
     }
 
@@ -792,12 +904,20 @@ class RxBleConnectionTest extends GradleRoboSpecification {
         characteristic
     }
 
-    public shouldGattContainServices(List list) {
+    public gattContainServices(List list) {
         bluetoothGattMock.getServices() >> list
     }
 
-    public shouldGattContainNoServices() {
-        shouldGattContainServices(emptyList())
+    public gattContainNoServices() {
+        gattContainServices(emptyList())
+    }
+
+    public cacheContainsPreviousDiscovery(Observable<RxBleDeviceServices> previousDiscoveryObservable) {
+        discoveredServicesCacheMock.get() >> previousDiscoveryObservable
+    }
+
+    public cacheContainsNoObservable() {
+        cacheContainsPreviousDiscovery(null)
     }
 
     public shouldFailStartingDiscovery() {
@@ -821,33 +941,51 @@ class RxBleConnectionTest extends GradleRoboSpecification {
         bluetoothGattMock.readCharacteristic(_) >> false
     }
 
-    private static Closure<Observable<byte[]>> readCharacteristicUuidClosure = { RxBleConnection connection, BluetoothGattCharacteristic characteristic -> return connection.readCharacteristic(characteristic.getUuid()) }
+    private
+    static Closure<Observable<byte[]>> readCharacteristicUuidClosure = { RxBleConnection connection, BluetoothGattCharacteristic characteristic -> return connection.readCharacteristic(characteristic.getUuid()) }
 
-    private static Closure<Observable<byte[]>> readCharacteristicCharacteristicClosure = { RxBleConnection connection, BluetoothGattCharacteristic characteristic -> return connection.readCharacteristic(characteristic) }
+    private
+    static Closure<Observable<byte[]>> readCharacteristicCharacteristicClosure = { RxBleConnection connection, BluetoothGattCharacteristic characteristic -> return connection.readCharacteristic(characteristic) }
 
-    private static Closure<Observable<byte[]>> writeCharacteristicUuidClosure = { RxBleConnection connection, BluetoothGattCharacteristic characteristic, byte[] data -> return connection.writeCharacteristic(characteristic.getUuid(), data) }
+    private
+    static Closure<Observable<byte[]>> writeCharacteristicUuidClosure = { RxBleConnection connection, BluetoothGattCharacteristic characteristic, byte[] data -> return connection.writeCharacteristic(characteristic.getUuid(), data) }
 
-    private static Closure<Observable<byte[]>> writeCharacteristicCharacteristicClosure = { RxBleConnection connection, BluetoothGattCharacteristic characteristic, byte[] data -> return connection.writeCharacteristic(characteristic, data) }
+    private
+    static Closure<Observable<byte[]>> writeCharacteristicCharacteristicClosure = { RxBleConnection connection, BluetoothGattCharacteristic characteristic, byte[] data -> return connection.writeCharacteristic(characteristic, data) }
 
-    private static Closure<Observable<byte[]>> writeCharacteristicCharacteristicDeprecatedClosure = { RxBleConnection connection, BluetoothGattCharacteristic characteristic, byte[] data ->
+    private
+    static Closure<Observable<byte[]>> writeCharacteristicCharacteristicDeprecatedClosure = { RxBleConnection connection, BluetoothGattCharacteristic characteristic, byte[] data ->
         characteristic.setValue(data)
         return connection.writeCharacteristic(characteristic)
     }
 
-    private static Closure<Observable<Observable<byte[]>>> setupNotificationUuidClosure = { RxBleConnection connection, BluetoothGattCharacteristic characteristic -> return connection.setupNotification(characteristic.getUuid()) }
+    private
+    static Closure<Observable<Observable<byte[]>>> setupNotificationUuidClosure = { RxBleConnection connection, BluetoothGattCharacteristic characteristic -> return connection.setupNotification(characteristic.getUuid()) }
 
-    private static Closure<Observable<Observable<byte[]>>> setupNotificationCharacteristicClosure = { RxBleConnection connection, BluetoothGattCharacteristic characteristic -> return connection.setupNotification(characteristic) }
+    private
+    static Closure<Observable<Observable<byte[]>>> setupNotificationCharacteristicClosure = { RxBleConnection connection, BluetoothGattCharacteristic characteristic -> return connection.setupNotification(characteristic) }
 
-    private static Closure<Observable<Observable<byte[]>>> setupIndicationUuidClosure = { RxBleConnection connection, BluetoothGattCharacteristic characteristic -> return connection.setupIndication(characteristic.getUuid()) }
+    private
+    static Closure<Observable<Observable<byte[]>>> setupIndicationUuidClosure = { RxBleConnection connection, BluetoothGattCharacteristic characteristic -> return connection.setupIndication(characteristic.getUuid()) }
 
-    private static Closure<Observable<Observable<byte[]>>> setupIndicationCharacteristicClosure = { RxBleConnection connection, BluetoothGattCharacteristic characteristic -> return connection.setupIndication(characteristic) }
+    private
+    static Closure<Observable<Observable<byte[]>>> setupIndicationCharacteristicClosure = { RxBleConnection connection, BluetoothGattCharacteristic characteristic -> return connection.setupIndication(characteristic) }
 
-    private static Closure<Observable<Observable<byte[]>>> setupNotificationUuidCompatClosure = { RxBleConnection connection, BluetoothGattCharacteristic characteristic -> return connection.setupNotification(characteristic.getUuid(), NotificationSetupMode.COMPAT) }
+    private
+    static Closure<Observable<Observable<byte[]>>> setupNotificationUuidCompatClosure = { RxBleConnection connection, BluetoothGattCharacteristic characteristic -> return connection.setupNotification(characteristic.getUuid(), NotificationSetupMode.COMPAT) }
 
-    private static Closure<Observable<Observable<byte[]>>> setupNotificationCharacteristicCompatClosure = { RxBleConnection connection, BluetoothGattCharacteristic characteristic -> return connection.setupNotification(characteristic, NotificationSetupMode.COMPAT) }
+    private
+    static Closure<Observable<Observable<byte[]>>> setupNotificationCharacteristicCompatClosure = { RxBleConnection connection, BluetoothGattCharacteristic characteristic -> return connection.setupNotification(characteristic, NotificationSetupMode.COMPAT) }
 
-    private static Closure<Observable<Observable<byte[]>>> setupIndicationUuidCompatClosure = { RxBleConnection connection, BluetoothGattCharacteristic characteristic -> return connection.setupIndication(characteristic.getUuid(), NotificationSetupMode.COMPAT) }
+    private
+    static Closure<Observable<Observable<byte[]>>> setupIndicationUuidCompatClosure = { RxBleConnection connection, BluetoothGattCharacteristic characteristic -> return connection.setupIndication(characteristic.getUuid(), NotificationSetupMode.COMPAT) }
 
-    private static Closure<Observable<Observable<byte[]>>> setupIndicationCharacteristicCompatClosure = { RxBleConnection connection, BluetoothGattCharacteristic characteristic -> return connection.setupIndication(characteristic, NotificationSetupMode.COMPAT) }
+    private
+    static Closure<Observable<Observable<byte[]>>> setupIndicationCharacteristicCompatClosure = { RxBleConnection connection, BluetoothGattCharacteristic characteristic -> return connection.setupIndication(characteristic, NotificationSetupMode.COMPAT) }
 
+    private <T> T mockOperation(Class<T> type) {
+        def operation = Mock type
+        operation.asObservable >> Observable.empty()
+        operation
+    }
 }

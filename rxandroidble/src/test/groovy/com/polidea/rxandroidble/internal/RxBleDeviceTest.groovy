@@ -24,11 +24,15 @@ public class RxBleDeviceTest extends Specification {
     PublishSubject<RxBleConnection> mockConnectorEstablishConnectionPublishSubject = PublishSubject.create()
     PublishSubject<RxBleConnection.RxBleConnectionState> connectionStatePublishSubject = PublishSubject.create()
     @Shared BluetoothGatt mockBluetoothGatt = Mock BluetoothGatt
-    RxBleDevice rxBleDevice = new RxBleDeviceImpl(mockBluetoothDevice, mockConnector)
+    def deviceDependencies = Mock DeviceDependencies
+    RxBleDevice objectUnderTest
     TestSubscriber deviceConnectionStateSubscriber = new TestSubscriber()
 
     def setup() {
         mockConnector.prepareConnection(_, _) >> mockConnectorEstablishConnectionPublishSubject
+        deviceDependencies.getConnector() >> mockConnector
+        deviceDependencies.getBluetoothDevice() >> mockBluetoothDevice
+        objectUnderTest = new RxBleDeviceImpl(deviceDependencies)
     }
 
     def "should return the BluetoothDevice name"() {
@@ -37,7 +41,7 @@ public class RxBleDeviceTest extends Specification {
         mockBluetoothDevice.name >> "testName"
 
         expect:
-        rxBleDevice.getName() == "testName"
+        objectUnderTest.getName() == "testName"
     }
 
     def "should return the BluetoothDevice address"() {
@@ -46,32 +50,36 @@ public class RxBleDeviceTest extends Specification {
         mockBluetoothDevice.address >> "aa:aa:aa:aa:aa:aa"
 
         expect:
-        rxBleDevice.getMacAddress() == "aa:aa:aa:aa:aa:aa"
+        objectUnderTest.getMacAddress() == "aa:aa:aa:aa:aa:aa"
     }
 
     def "equals() should return true when compared to a different RxBleDevice instance with the same underlying BluetoothDevice"() {
 
         given:
-        def differentRxBleDeviceWithSameBluetoothDevice = new RxBleDeviceImpl(mockBluetoothDevice, null)
+        def differentDeviceDependencies = Mock(DeviceDependencies)
+        differentDeviceDependencies.getBluetoothDevice() >> mockBluetoothDevice
+        def differentRxBleDeviceWithSameBluetoothDevice = new RxBleDeviceImpl(differentDeviceDependencies)
 
         expect:
-        rxBleDevice.equals(differentRxBleDeviceWithSameBluetoothDevice)
+        objectUnderTest.equals(differentRxBleDeviceWithSameBluetoothDevice)
     }
 
     def "hashCode() should return the same value as a different RxBleDevice instance hashCode() with the same underlying BluetoothDevice"() {
 
         given:
-        def differentRxBleDevice = new RxBleDeviceImpl(mockBluetoothDevice, null)
+        def differentDeviceDependencies = Mock(DeviceDependencies)
+        differentDeviceDependencies.getBluetoothDevice() >> mockBluetoothDevice
+        def differentRxBleDevice = new RxBleDeviceImpl(differentDeviceDependencies)
 
         expect:
-        rxBleDevice.hashCode() == differentRxBleDevice.hashCode()
+        objectUnderTest.hashCode() == differentRxBleDevice.hashCode()
     }
 
     @Unroll
     def "establishConnection() should call RxBleConnection.Connector.prepareConnection() #id"() {
 
         when:
-        rxBleDevice.establishConnection(theContext, theAutoConnectValue).subscribe()
+        objectUnderTest.establishConnection(theContext, theAutoConnectValue).subscribe()
 
         then:
         1 * mockConnector.prepareConnection(theContext, theAutoConnectValue) >> connectionStatePublishSubject
@@ -87,7 +95,7 @@ public class RxBleDeviceTest extends Specification {
     def "should emit DISCONNECTED when subscribed and RxBleDevice was not connected yet"() {
 
         when:
-        rxBleDevice.observeConnectionStateChanges().subscribe(deviceConnectionStateSubscriber)
+        objectUnderTest.observeConnectionStateChanges().subscribe(deviceConnectionStateSubscriber)
 
         then:
         deviceConnectionStateSubscriber.assertValue(DISCONNECTED)
@@ -99,7 +107,7 @@ public class RxBleDeviceTest extends Specification {
         startConnecting()
 
         when:
-        rxBleDevice.observeConnectionStateChanges().subscribe(deviceConnectionStateSubscriber)
+        objectUnderTest.observeConnectionStateChanges().subscribe(deviceConnectionStateSubscriber)
 
         then:
         deviceConnectionStateSubscriber.assertValue(CONNECTING)
@@ -108,7 +116,7 @@ public class RxBleDeviceTest extends Specification {
     def "should emit DISCONNECTED, CONNECTING state on subscribing to establishConnection()"() {
 
         given:
-        rxBleDevice.observeConnectionStateChanges().subscribe(deviceConnectionStateSubscriber)
+        objectUnderTest.observeConnectionStateChanges().subscribe(deviceConnectionStateSubscriber)
 
         when:
         startConnecting()
@@ -124,7 +132,7 @@ public class RxBleDeviceTest extends Specification {
         notifyConnectionWasEstablished()
 
         when:
-        rxBleDevice.observeConnectionStateChanges().subscribe(deviceConnectionStateSubscriber)
+        objectUnderTest.observeConnectionStateChanges().subscribe(deviceConnectionStateSubscriber)
 
         then:
         deviceConnectionStateSubscriber.assertValue(CONNECTED)
@@ -133,7 +141,7 @@ public class RxBleDeviceTest extends Specification {
     def "should emit CONNECTING and CONNECTED state when subscribed after subscribing establishConnection() and before it emits RxBleConnection"() {
 
         given:
-        rxBleDevice.observeConnectionStateChanges().subscribe(deviceConnectionStateSubscriber)
+        objectUnderTest.observeConnectionStateChanges().subscribe(deviceConnectionStateSubscriber)
 
         when:
         startConnecting()
@@ -152,7 +160,7 @@ public class RxBleDeviceTest extends Specification {
         connectionTestSubscriber.unsubscribe()
 
         when:
-        rxBleDevice.observeConnectionStateChanges().subscribe(deviceConnectionStateSubscriber)
+        objectUnderTest.observeConnectionStateChanges().subscribe(deviceConnectionStateSubscriber)
 
         then:
         deviceConnectionStateSubscriber.assertValue(DISCONNECTED)
@@ -161,7 +169,7 @@ public class RxBleDeviceTest extends Specification {
     def "should emit DISCONNECTED state when connection was broken"() {
 
         given:
-        rxBleDevice.observeConnectionStateChanges().subscribe(deviceConnectionStateSubscriber)
+        objectUnderTest.observeConnectionStateChanges().subscribe(deviceConnectionStateSubscriber)
         rxStartConnecting().subscribe({ RxBleConnection ignored -> }, { Throwable ignored -> })
         notifyConnectionWasEstablished()
 
@@ -174,7 +182,7 @@ public class RxBleDeviceTest extends Specification {
 
     def "should not propagate RxBleConnection.getConnectionState() errors"() {
         given:
-        rxBleDevice.observeConnectionStateChanges().subscribe(deviceConnectionStateSubscriber)
+        objectUnderTest.observeConnectionStateChanges().subscribe(deviceConnectionStateSubscriber)
         startConnecting()
         notifyConnectionWasEstablished()
 
@@ -187,7 +195,7 @@ public class RxBleDeviceTest extends Specification {
 
     def "should not unsubscribe if connection was dropped"() {
         given:
-        rxBleDevice.observeConnectionStateChanges().subscribe(deviceConnectionStateSubscriber)
+        objectUnderTest.observeConnectionStateChanges().subscribe(deviceConnectionStateSubscriber)
         startConnecting()
         notifyConnectionWasEstablished()
 
@@ -236,7 +244,7 @@ public class RxBleDeviceTest extends Specification {
         subscription.unsubscribe()
 
         when:
-        rxBleDevice.establishConnection(Mock(Context), false).subscribe(secondSubscriber)
+        objectUnderTest.establishConnection(Mock(Context), false).subscribe(secondSubscriber)
 
         then:
         firstSubscriber.assertValueCount 1
@@ -260,7 +268,7 @@ public class RxBleDeviceTest extends Specification {
     def "should return DISCONNECTED when RxBleDevice was not connected yet"() {
 
         when:
-        def connectionState = rxBleDevice.getConnectionState()
+        def connectionState = objectUnderTest.getConnectionState()
 
         then:
         connectionState == DISCONNECTED
@@ -272,7 +280,7 @@ public class RxBleDeviceTest extends Specification {
         startConnecting()
 
         when:
-        def connectionState = rxBleDevice.getConnectionState()
+        def connectionState = objectUnderTest.getConnectionState()
 
         then:
         connectionState == CONNECTING
@@ -285,7 +293,7 @@ public class RxBleDeviceTest extends Specification {
         notifyConnectionWasEstablished()
 
         when:
-        def connectionState = rxBleDevice.getConnectionState()
+        def connectionState = objectUnderTest.getConnectionState()
 
         then:
         connectionState == CONNECTED
@@ -298,7 +306,7 @@ public class RxBleDeviceTest extends Specification {
         dropConnection()
 
         when:
-        def connectionState = rxBleDevice.getConnectionState()
+        def connectionState = objectUnderTest.getConnectionState()
 
         then:
         connectionState == DISCONNECTED
@@ -307,7 +315,7 @@ public class RxBleDeviceTest extends Specification {
     def "should return initial BluetoothDevice on getBluetoothDevice()"() {
 
         expect:
-        rxBleDevice.getBluetoothDevice() == mockBluetoothDevice
+        objectUnderTest.getBluetoothDevice() == mockBluetoothDevice
     }
 
     public void startConnecting() {
@@ -315,7 +323,7 @@ public class RxBleDeviceTest extends Specification {
     }
 
     public Observable<RxBleConnection> rxStartConnecting() {
-        return rxBleDevice.establishConnection(Mock(Context), false)
+        return objectUnderTest.establishConnection(Mock(Context), false)
     }
 
     public void notifyConnectionWasEstablished() {

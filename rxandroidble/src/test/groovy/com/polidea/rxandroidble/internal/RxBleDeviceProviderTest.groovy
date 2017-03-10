@@ -5,20 +5,14 @@ import com.polidea.rxandroidble.FlatRxBleRadio
 import com.polidea.rxandroidble.MockRxBleAdapterWrapper
 import com.polidea.rxandroidble.internal.util.BleConnectionCompat
 import rx.Observable
-import rx.Scheduler
 import spock.lang.Specification
 
 class RxBleDeviceProviderTest extends Specification {
     def mockRadio = new FlatRxBleRadio()
     def mockAdapterWrapper = Mock MockRxBleAdapterWrapper
     def adapterStateObservable = Observable.never()
-    def objectUnderTest = new RxBleDeviceProvider(
-            mockAdapterWrapper,
-            mockRadio,
-            Mock(BleConnectionCompat),
-            adapterStateObservable,
-            Mock(Scheduler)
-    )
+    def clientDependencies = Mock ClientDependencies
+    RxBleDeviceProvider objectUnderTest
 
     def setup() {
         mockAdapterWrapper.getRemoteDevice(_) >> {
@@ -27,6 +21,11 @@ class RxBleDeviceProviderTest extends Specification {
                 device.getAddress() >> address
                 device
         }
+        clientDependencies.getBluetoothAdapterWrapper() >> mockAdapterWrapper
+        clientDependencies.getAdapterStateObservable() >> adapterStateObservable.asObservable()
+        clientDependencies.getRadio() >> mockRadio
+        clientDependencies.getConnectionCompat() >> Mock(BleConnectionCompat)
+        objectUnderTest = new RxBleDeviceProvider(clientDependencies)
     }
 
     def "should return new BleDevice if getBleDevice was called for the first time"() {

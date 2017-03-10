@@ -1,6 +1,6 @@
 package com.polidea.rxandroidble.internal.connection
 
-import static com.polidea.rxandroidble.internal.connection.RxBleConnectionConnectorOperationsProvider.RxBleOperations
+import static ConnectionManagersProvider.ConnectionManagers
 
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
@@ -27,7 +27,7 @@ public class RxBleConnectionConnectorImplTest extends Specification {
     RxBleGattCallback.Provider mockCallbackProvider = Mock RxBleGattCallback.Provider
     RxBleRadioOperationConnect mockConnect = Mock RxBleRadioOperationConnect
     RxBleRadioOperationDisconnect mockDisconnect = Mock RxBleRadioOperationDisconnect
-    RxBleConnectionConnectorOperationsProvider mockOperationsProvider = Mock RxBleConnectionConnectorOperationsProvider
+    ConnectionManagersProvider mockOperationsProvider = Mock ConnectionManagersProvider
     RxBleConnectionConnectorImpl objectUnderTest
     BleConnectionCompat mockConnectionCompat = Mock BleConnectionCompat
     RxBleAdapterWrapper mockAdapterWrapper = Mock RxBleAdapterWrapper
@@ -37,7 +37,7 @@ public class RxBleConnectionConnectorImplTest extends Specification {
 
     def setup() {
         mockCallbackProvider.provide() >> mockCallback
-        mockOperationsProvider.provide(*_) >> new RxBleOperations(mockConnect, mockDisconnect)
+        mockOperationsProvider.provide(*_) >> new ConnectionManagers(rxBleGattCallback, mockConnect, mockDisconnect)
 
         objectUnderTest = new RxBleConnectionConnectorImpl(
                 mockDevice,

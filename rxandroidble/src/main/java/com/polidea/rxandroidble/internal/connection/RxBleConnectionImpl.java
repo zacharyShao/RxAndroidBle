@@ -1,90 +1,63 @@
 package com.polidea.rxandroidble.internal.connection;
 
-import android.bluetooth.BluetoothGatt;
-import android.bluetooth.BluetoothGattCharacteristic;
-import android.bluetooth.BluetoothGattDescriptor;
-import android.bluetooth.BluetoothGattService;
-import android.os.Build;
-import android.os.DeadObjectException;
-import android.support.annotation.NonNull;
-import android.support.annotation.RequiresApi;
-
-import com.polidea.rxandroidble.NotificationSetupMode;
-import com.polidea.rxandroidble.RxBleConnection;
-import com.polidea.rxandroidble.RxBleDeviceServices;
-import com.polidea.rxandroidble.RxBleRadioOperationCustom;
-import com.polidea.rxandroidble.exceptions.BleCannotSetCharacteristicNotificationException;
-import com.polidea.rxandroidble.exceptions.BleConflictingNotificationAlreadySetException;
-import com.polidea.rxandroidble.exceptions.BleDisconnectedException;
-import com.polidea.rxandroidble.exceptions.BleException;
-import com.polidea.rxandroidble.internal.RxBleRadio;
-import com.polidea.rxandroidble.internal.RxBleRadioOperation;
-import com.polidea.rxandroidble.internal.operations.RxBleRadioOperationCharacteristicRead;
-import com.polidea.rxandroidble.internal.operations.RxBleRadioOperationCharacteristicWrite;
-import com.polidea.rxandroidble.internal.operations.RxBleRadioOperationDescriptorRead;
-import com.polidea.rxandroidble.internal.operations.RxBleRadioOperationDescriptorWrite;
-import com.polidea.rxandroidble.internal.operations.RxBleRadioOperationMtuRequest;
-import com.polidea.rxandroidble.internal.operations.RxBleRadioOperationReadRssi;
-import com.polidea.rxandroidble.internal.operations.RxBleRadioOperationServicesDiscover;
-import com.polidea.rxandroidble.internal.util.ByteAssociation;
-import com.polidea.rxandroidble.internal.util.CharacteristicChangedEvent;
-import com.polidea.rxandroidble.internal.util.CharacteristicNotificationId;
-import com.polidea.rxandroidble.internal.util.ObservableUtil;
-
-import java.util.HashMap;
-import java.util.List;
-import java.util.UUID;
-import java.util.concurrent.Callable;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicReference;
-
-import rx.Observable;
-import rx.Scheduler;
-import rx.functions.Action0;
-import rx.functions.Action1;
-import rx.functions.Actions;
-import rx.functions.Func0;
-import rx.functions.Func1;
-import rx.schedulers.Schedulers;
-
 import static android.bluetooth.BluetoothGattDescriptor.DISABLE_NOTIFICATION_VALUE;
 import static android.bluetooth.BluetoothGattDescriptor.ENABLE_INDICATION_VALUE;
 import static android.bluetooth.BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE;
 import static rx.Observable.error;
 import static rx.Observable.just;
 
+import android.bluetooth.BluetoothGattCharacteristic;
+import android.bluetooth.BluetoothGattDescriptor;
+import android.bluetooth.BluetoothGattService;
+import android.os.Build;
+import android.support.annotation.NonNull;
+import android.support.annotation.RequiresApi;
+import com.polidea.rxandroidble.NotificationSetupMode;
+import com.polidea.rxandroidble.RxBleConnection;
+import com.polidea.rxandroidble.RxBleDeviceServices;
+import com.polidea.rxandroidble.RxBleRadioOperationCustom;
+import com.polidea.rxandroidble.exceptions.BleCannotSetCharacteristicNotificationException;
+import com.polidea.rxandroidble.exceptions.BleConflictingNotificationAlreadySetException;
+import com.polidea.rxandroidble.internal.RxBleRadioOperation;
+import com.polidea.rxandroidble.internal.util.ByteAssociation;
+import com.polidea.rxandroidble.internal.util.CharacteristicChangedEvent;
+import com.polidea.rxandroidble.internal.util.CharacteristicNotificationId;
+import com.polidea.rxandroidble.internal.util.ObservableUtil;
+import java.util.HashMap;
+import java.util.List;
+import java.util.UUID;
+import java.util.concurrent.Callable;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
+import rx.Observable;
+import rx.functions.Action0;
+import rx.functions.Action1;
+import rx.functions.Actions;
+import rx.functions.Func0;
+import rx.functions.Func1;
+
 public class RxBleConnectionImpl implements RxBleConnection {
 
     static final UUID CLIENT_CHARACTERISTIC_CONFIG_UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb");
 
-    private final RxBleRadio rxBleRadio;
-
-    private final RxBleGattCallback gattCallback;
-
-    private final BluetoothGatt bluetoothGatt;
-
-    private final AtomicReference<Observable<RxBleDeviceServices>> discoveredServicesCache = new AtomicReference<>();
+    private final AtomicReference<Observable<RxBleDeviceServices>> discoveredServicesCache;
 
     private final HashMap<CharacteristicNotificationId, Observable<Observable<byte[]>>> notificationObservableMap = new HashMap<>();
 
     private final HashMap<CharacteristicNotificationId, Observable<Observable<byte[]>>> indicationObservableMap = new HashMap<>();
 
-    private final Scheduler timeoutScheduler = Schedulers.computation();
+    private final ConnectionDependencies connectionDependencies;
 
     private Integer mtu = 20; // Default value at the beginning
 
-    public RxBleConnectionImpl(RxBleRadio rxBleRadio, RxBleGattCallback gattCallback, BluetoothGatt bluetoothGatt) {
-        this.rxBleRadio = rxBleRadio;
-        this.gattCallback = gattCallback;
-        this.bluetoothGatt = bluetoothGatt;
+    public RxBleConnectionImpl(ConnectionDependencies connectionDependencies) {
+        this.connectionDependencies = connectionDependencies;
+        this.discoveredServicesCache = connectionDependencies.getDiscoveredServicesCache();
     }
 
     @Override
     public LongWriteOperationBuilder createNewLongWriteBuilder() {
-        return new LongWriteOperationBuilderImpl(
-                bluetoothGatt,
-                gattCallback,
-                rxBleRadio,
+        return connectionDependencies.getNewLongWriteOpBuilder(
                 new Callable<Integer>() {
                     @Override
                     public Integer call() throws Exception {
@@ -104,15 +77,7 @@ public class RxBleConnectionImpl implements RxBleConnection {
     @RequiresApi(api = Build.VERSION_CODES.LOLLIPOP)
     private Observable<Integer> privateRequestMtu(int mtu, long timeout, TimeUnit timeUnit) {
         final Observable<Integer> newObservable;
-        newObservable = rxBleRadio
-                .queue(new RxBleRadioOperationMtuRequest(
-                        mtu,
-                        gattCallback,
-                        bluetoothGatt,
-                        timeout,
-                        timeUnit,
-                        Schedulers.computation()
-                ))
+        newObservable = queueOp(connectionDependencies.getNewRequestMtuOperation(mtu, timeout, timeUnit))
                 .doOnNext(new Action1<Integer>() {
                     @Override
                     public void call(Integer newMtu) {
@@ -141,19 +106,12 @@ public class RxBleConnectionImpl implements RxBleConnection {
                 return sharedObservable;
             }
 
-            final List<BluetoothGattService> services = bluetoothGatt.getServices();
+            final List<BluetoothGattService> services = connectionDependencies.getBluetoothGatt().getServices();
             final Observable<RxBleDeviceServices> newObservable;
             if (services.size() > 0) { // checking if bluetoothGatt has already discovered services (internal cache?)
                 newObservable = just(new RxBleDeviceServices(services));
             } else { // performing actual discovery
-                newObservable = rxBleRadio
-                        .queue(new RxBleRadioOperationServicesDiscover(
-                                gattCallback,
-                                bluetoothGatt,
-                                timeout,
-                                timeUnit,
-                                timeoutScheduler
-                        ))
+                newObservable = queueOp(connectionDependencies.getNewServiceDiscoveryOperation(timeout, timeUnit))
                         .cacheWithInitialCapacity(1);
             }
 
@@ -317,7 +275,7 @@ public class RxBleConnectionImpl implements RxBleConnection {
         return Observable.fromCallable(new Callable<Boolean>() {
             @Override
             public Boolean call() throws Exception {
-                return bluetoothGatt.setCharacteristicNotification(characteristic, isNotificationEnabled);
+                return connectionDependencies.getBluetoothGatt().setCharacteristicNotification(characteristic, isNotificationEnabled);
             }
         });
     }
@@ -348,7 +306,7 @@ public class RxBleConnectionImpl implements RxBleConnection {
 
     @NonNull
     private Observable<byte[]> observeOnCharacteristicChangeCallbacks(final CharacteristicNotificationId characteristicId) {
-        return gattCallback.getOnCharacteristicChanged()
+        return connectionDependencies.getGattCallback().getOnCharacteristicChanged()
                 .filter(new Func1<CharacteristicChangedEvent, Boolean>() {
                     @Override
                     public Boolean call(CharacteristicChangedEvent notificationIdWithData) {
@@ -425,11 +383,7 @@ public class RxBleConnectionImpl implements RxBleConnection {
 
     @Override
     public Observable<byte[]> readCharacteristic(@NonNull BluetoothGattCharacteristic characteristic) {
-        return rxBleRadio.queue(new RxBleRadioOperationCharacteristicRead(
-                gattCallback,
-                bluetoothGatt,
-                characteristic,
-                timeoutScheduler));
+        return queueOp(connectionDependencies.getNewReadCharacteristicOperation(characteristic));
     }
 
     @Override
@@ -459,12 +413,7 @@ public class RxBleConnectionImpl implements RxBleConnection {
 
     @Override
     public Observable<byte[]> writeCharacteristic(@NonNull BluetoothGattCharacteristic characteristic, @NonNull byte[] data) {
-        return rxBleRadio.queue(new RxBleRadioOperationCharacteristicWrite(
-                gattCallback,
-                bluetoothGatt,
-                characteristic,
-                data,
-                timeoutScheduler));
+        return queueOp(connectionDependencies.getNewWriteCharacteristicOperation(characteristic, data));
     }
 
     @Override
@@ -486,9 +435,7 @@ public class RxBleConnectionImpl implements RxBleConnection {
 
     @Override
     public Observable<byte[]> readDescriptor(BluetoothGattDescriptor descriptor) {
-        return rxBleRadio.queue(
-                new RxBleRadioOperationDescriptorRead(gattCallback, bluetoothGatt, descriptor, timeoutScheduler)
-        )
+        return queueOp(connectionDependencies.getNewReadDescriptorOperation(descriptor))
                 .map(new Func1<ByteAssociation<BluetoothGattDescriptor>, byte[]>() {
                     @Override
                     public byte[] call(ByteAssociation<BluetoothGattDescriptor> bluetoothGattDescriptorPair) {
@@ -518,45 +465,20 @@ public class RxBleConnectionImpl implements RxBleConnection {
 
     @Override
     public Observable<byte[]> writeDescriptor(BluetoothGattDescriptor bluetoothGattDescriptor, byte[] data) {
-        return rxBleRadio.queue(
-                new RxBleRadioOperationDescriptorWrite(
-                        gattCallback,
-                        bluetoothGatt,
-                        BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT,
-                        bluetoothGattDescriptor,
-                        data,
-                        timeoutScheduler)
-        );
+        return queueOp(connectionDependencies.getNewWriteDescriptorOperation(bluetoothGattDescriptor, data));
     }
 
     @Override
     public Observable<Integer> readRssi() {
-        return rxBleRadio.queue(new RxBleRadioOperationReadRssi(gattCallback, bluetoothGatt, timeoutScheduler));
+        return queueOp(connectionDependencies.getNewReadRssiOperation());
     }
 
     @Override
     public <T> Observable<T> queue(final RxBleRadioOperationCustom<T> operation) {
-        return rxBleRadio.queue(new RxBleRadioOperation<T>() {
-            @Override
-            @SuppressWarnings("ConstantConditions")
-            protected void protectedRun() throws Throwable {
-                Observable<T> operationObservable = operation.asObservable(bluetoothGatt, gattCallback, rxBleRadio.scheduler());
-                if (operationObservable == null) {
-                    throw new IllegalArgumentException("The custom operation asObservable method must return a non-null observable");
-                }
+        return queueOp(connectionDependencies.getNewAnonymousCustomOperation(operation));
+    }
 
-                operationObservable.doOnCompleted(new Action0() {
-                    @Override
-                    public void call() {
-                        releaseRadio();
-                    }
-                }).subscribe(getSubscriber());
-            }
-
-            @Override
-            protected BleException provideException(DeadObjectException deadObjectException) {
-                return new BleDisconnectedException(deadObjectException, bluetoothGatt.getDevice().getAddress());
-            }
-        });
+    private <T> Observable<T> queueOp(RxBleRadioOperation<T> operation) {
+        return connectionDependencies.getRadio().queue(operation);
     }
 }

@@ -21,14 +21,12 @@ import static com.polidea.rxandroidble.RxBleConnection.RxBleConnectionState.DISC
 
 class RxBleDeviceImpl implements RxBleDevice {
 
-    private final BluetoothDevice bluetoothDevice;
-    private final RxBleConnection.Connector connector;
+    private final DeviceDependencies deviceDependencies;
     private final BehaviorSubject<RxBleConnection.RxBleConnectionState> connectionStateSubject = BehaviorSubject.create(DISCONNECTED);
     private AtomicBoolean isConnected = new AtomicBoolean(false);
 
-    public RxBleDeviceImpl(BluetoothDevice bluetoothDevice, RxBleConnection.Connector connector) {
-        this.bluetoothDevice = bluetoothDevice;
-        this.connector = connector;
+    public RxBleDeviceImpl(DeviceDependencies deviceDependencies) {
+        this.deviceDependencies = deviceDependencies;
     }
 
     @Override
@@ -48,7 +46,7 @@ class RxBleDeviceImpl implements RxBleDevice {
             public Observable<RxBleConnection> call() {
 
                 if (isConnected.compareAndSet(false, true)) {
-                    return connector.prepareConnection(context, autoConnect)
+                    return deviceDependencies.getConnector().prepareConnection(context, autoConnect)
                             .doOnSubscribe(new Action0() {
                                 @Override
                                 public void call() {
@@ -69,7 +67,7 @@ class RxBleDeviceImpl implements RxBleDevice {
                                 }
                             });
                 } else {
-                    return Observable.error(new BleAlreadyConnectedException(bluetoothDevice.getAddress()));
+                    return Observable.error(new BleAlreadyConnectedException(deviceDependencies.getBluetoothDevice().getAddress()));
                 }
             }
         });
@@ -77,17 +75,17 @@ class RxBleDeviceImpl implements RxBleDevice {
 
     @Override
     public String getName() {
-        return bluetoothDevice.getName();
+        return deviceDependencies.getBluetoothDevice().getName();
     }
 
     @Override
     public String getMacAddress() {
-        return bluetoothDevice.getAddress();
+        return deviceDependencies.getBluetoothDevice().getAddress();
     }
 
     @Override
     public BluetoothDevice getBluetoothDevice() {
-        return bluetoothDevice;
+        return deviceDependencies.getBluetoothDevice();
     }
 
     @Override
@@ -100,16 +98,17 @@ class RxBleDeviceImpl implements RxBleDevice {
         }
 
         RxBleDeviceImpl that = (RxBleDeviceImpl) o;
-        return bluetoothDevice.equals(that.bluetoothDevice);
+        return deviceDependencies.getBluetoothDevice().equals(that.getBluetoothDevice());
     }
 
     @Override
     public int hashCode() {
-        return bluetoothDevice.hashCode();
+        return deviceDependencies.getBluetoothDevice().hashCode();
     }
 
     @Override
     public String toString() {
+        final BluetoothDevice bluetoothDevice = deviceDependencies.getBluetoothDevice();
         return "RxBleDeviceImpl{" + "bluetoothDevice=" + bluetoothDevice.getName() + '(' + bluetoothDevice.getAddress() + ')' + '}';
     }
 }

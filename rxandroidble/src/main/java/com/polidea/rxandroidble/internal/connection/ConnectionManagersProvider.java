@@ -16,25 +16,29 @@ import rx.functions.Action1;
 import rx.functions.Actions;
 import rx.schedulers.Schedulers;
 
-public class RxBleConnectionConnectorOperationsProvider {
+public class ConnectionManagersProvider {
 
-    public static class RxBleOperations {
+    public static class ConnectionManagers {
 
-        public final RxBleRadioOperationConnect connect;
+        public final RxBleGattCallback rxBleGattCallback;
 
-        public final RxBleRadioOperationDisconnect disconnect;
+        public final RxBleRadioOperationConnect connectOperation;
 
-        public RxBleOperations(RxBleRadioOperationConnect connect, RxBleRadioOperationDisconnect disconnect) {
-            this.connect = connect;
-            this.disconnect = disconnect;
+        public final RxBleRadioOperationDisconnect disconnectOperation;
+
+        public ConnectionManagers(RxBleGattCallback rxBleGattCallback, RxBleRadioOperationConnect connectOperation,
+                                  RxBleRadioOperationDisconnect disconnectOperation) {
+            this.rxBleGattCallback = rxBleGattCallback;
+            this.connectOperation = connectOperation;
+            this.disconnectOperation = disconnectOperation;
         }
     }
 
-    public RxBleOperations provide(Context context,
-                                   BluetoothDevice bluetoothDevice,
-                                   boolean autoConnect,
-                                   BleConnectionCompat connectionCompat,
-                                   RxBleGattCallback gattCallback) {
+    public ConnectionManagers provide(Context context,
+                                      BluetoothDevice bluetoothDevice,
+                                      boolean autoConnect,
+                                      BleConnectionCompat connectionCompat,
+                                      RxBleGattCallback gattCallback) {
         final AtomicReference<BluetoothGatt> bluetoothGattAtomicReference = new AtomicReference<>();
         RxBleRadioOperationConnect operationConnect = new RxBleRadioOperationConnect(bluetoothDevice,
                 gattCallback,
@@ -60,6 +64,6 @@ public class RxBleConnectionConnectorOperationsProvider {
                 },
                 Actions.<Throwable>toAction1(Actions.empty())
         );
-        return new RxBleOperations(operationConnect, operationDisconnect);
+        return new ConnectionManagers(gattCallback, operationConnect, operationDisconnect);
     }
 }

@@ -1,7 +1,12 @@
 package com.polidea.rxandroidble.sample.example1_scanning;
 
+import android.Manifest;
 import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.os.Build;
 import android.os.Bundle;
+import android.support.v4.app.ActivityCompat;
+import android.support.v4.content.ContextCompat;
 import android.support.v7.app.AppCompatActivity;
 import android.support.v7.widget.LinearLayoutManager;
 import android.support.v7.widget.RecyclerView;
@@ -25,6 +30,8 @@ import rx.android.schedulers.AndroidSchedulers;
 
 public class ScanActivity extends AppCompatActivity {
 
+    private static final int PERMISSION_REQUEST_SCAN = 1;
+
     @BindView(R.id.scan_toggle_btn)
     Button scanToggleButton;
     @BindView(R.id.scan_results)
@@ -44,7 +51,17 @@ public class ScanActivity extends AppCompatActivity {
 
     @OnClick(R.id.scan_toggle_btn)
     public void onScanToggleClick() {
+        if (Build.VERSION.SDK_INT >= 23) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+                ActivityCompat.requestPermissions(this, new String[]{
+                        Manifest.permission.ACCESS_COARSE_LOCATION}, PERMISSION_REQUEST_SCAN);
+                return;
+            }
+        }
+        doScan();
+    }
 
+    private void doScan(){
         if (isScanning()) {
             scanSubscription.unsubscribe();
         } else {
@@ -61,9 +78,25 @@ public class ScanActivity extends AppCompatActivity {
                     .doOnUnsubscribe(this::clearSubscription)
                     .subscribe(resultsAdapter::addScanResult, this::onScanFailure);
         }
-
         updateButtonUIState();
     }
+
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        switch (requestCode) {
+            case PERMISSION_REQUEST_SCAN: {
+                for (int i = 0; i < grantResults.length; i++) {
+                    if (grantResults[i] != PackageManager.PERMISSION_GRANTED) {
+
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
 
     private void handleBleScanException(BleScanException bleScanException) {
 
